@@ -1,0 +1,15 @@
+Example alert snapshot
+======================
+⏱ Window ~ last 5 minutes
+Host: example-host
+
+🚨 SSH brute-force suspected: 12 failed logins in last ~5 min.
+Top IPs (count):
+   8 203.0.113.77
+   3 198.51.100.42
+   1 192.0.2.5
+
+🔥 HTTP 5xx spike: 45 errors in last ~5 min.
+Top endpoints:
+  20 /api/v1/login
+  10 /api/v1/orders
