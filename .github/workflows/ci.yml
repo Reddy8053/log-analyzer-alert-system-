@@ -1,0 +1,30 @@
+name: Shell Script CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Make scripts executable
+        run: |
+          chmod +x log_monitor.sh
+          chmod +x config.sh
+
+      - name: Run main script
+        run: ./log_monitor.sh
+
+      - name: ShellCheck (linting)
+        uses: ludeeus/action-shellcheck@v2
+        with:
+          severity: style
