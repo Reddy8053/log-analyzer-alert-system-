@@ -77,24 +77,34 @@ check_ssh_failures() {
   [[ -z "$new" ]] && { LOG "No new auth.log lines"; return; }
 
   # Count failures
+    # Count failures
   local fails_count
   fails_count=$(grep -E "Failed password|Invalid user|authentication failure" <<<"$new" | wc -l || echo 0)
 
-  # SAFE arithmetic
-  # SAFE arithmetic
-if ((${fails_count:-0} > 0)); then
-  # Extract top IPs
-  local top_ips
-  top_ips=$(grep -Eo "from ([0-9]{1,3}\.){3}[0-9]{1,3}" <<<"$new" \
-    | awk '{print $2}' | sort | uniq -c | sort -nr | head -n "${MAX_TOP_IPS:-5}")
-  # SAFE threshold comparison
-  if (( ${fails_count:-0} >= ${SSH_FAIL_THRESHOLD:-5} )); then
-    add_alert "$(printf "🚨 SSH brute-force suspected: %d failed logins in last ~%d min.\nTop IPs (count):\n%s\n" \
-      "${fails_count:-0}" "${RUN_WINDOW_MINUTES:-5}" "${top_ips:-none}")"
+  # Clean it to be digits only, and default to 0 if empty
+  fails_count=${fails_count//[!0-9]/}
+  [ -z "$fails_count" ] && fails_count=0
+
+  # Also default thresholds if missing
+  : "${SSH_FAIL_THRESHOLD:=5}"
+  : "${RUN_WINDOW_MINUTES:=5}"
+  : "${MAX_TOP_IPS:=5}"
+
+  if [ "$fails_count" -gt 0 ]; then
+    # Extract top IPs and rank top offenders
+    local top_ips
+    top_ips=$(grep -Eo "from ([0-9]{1,3}\.){3}[0-9]{1,3}" <<<"$new" \
+      | awk '{print $2}' | sort | uniq -c | sort -nr | head -n "$MAX_TOP_IPS")
+
+    if [ "$fails_count" -ge "$SSH_FAIL_THRESHOLD" ]; then
+      add_alert "$(printf "🚨 SSH brute-force suspected: %d failed logins in last ~%d min.\nTop IPs (count):\n%s\n" \
+        "$fails_count" "$RUN_WINDOW_MINUTES" "${top_ips:-none}")"
+    else
+      LOG "SSH failures below threshold: $fails_count (< $SSH_FAIL_THRESHOLD)"
+    fi
   else
-    LOG "SSH failures below threshold: ${fails_count:-0} (< ${SSH_FAIL_THRESHOLD:-5})"
+    LOG "No SSH failures detected in new lines"
   fi
-fi
 }
 
 # ============================
