@@ -81,25 +81,20 @@ check_ssh_failures() {
   fails_count=$(grep -E "Failed password|Invalid user|authentication failure" <<<"$new" | wc -l || echo 0)
 
   # SAFE arithmetic
-  if (( ${fails_count:-0} > 0 )); then
-
-    # Extract top IPs
-    local top_ips
-    top_ips=$(grep -Eo "from ([0-9]{1,3}\.){3}[0-9]{1,3}" <<<"$new" \
-      | awk '{print $2}' | sort | uniq -c | sort -nr | head -n "${MAX_TOP_IPS:-5}")
-
-    # SAFE threshold comparison
-    if (( ${fails_count:-0} >= ${SSH_FAIL_THRESHOLD:-5} )); then
-      add_alert "$(
-        printf "🚨 SSH brute-force suspected: %d failed logins in last ~%d min.\nTop IPs (count):\n%s\n" \
-        "${fails_count:-0}" "${RUN_WINDOW_MINUTES:-5}" "${top_ips:-none}"
-      )"
-    else
-      LOG "SSH failures below threshold: ${fails_count:-0} (< ${SSH_FAIL_THRESHOLD:-5})"
-    fi
+  # SAFE arithmetic
+if (( ${fails_count:-0} > 0 )); then
+  # Extract top IPs
+  local top_ips
+  top_ips=$(grep -Eo "from ([0-9]{1,3}\.){3}[0-9]{1,3}" <<<"$new" \
+    | awk '{print $2}' | sort | uniq -c | sort -nr | head -n "${MAX_TOP_IPS:-5}")
+  # SAFE threshold comparison
+  if (( ${fails_count:-0} >= ${SSH_FAIL_THRESHOLD:-5} )); then
+    add_alert "$(printf "🚨 SSH brute-force suspected: %d failed logins in last ~%d min.\nTop IPs (count):\n%s\n" \
+      "${fails_count:-0}" "${RUN_WINDOW_MINUTES:-5}" "${top_ips:-none}")"
   else
-    LOG "No SSH failures detected in new lines"
+    LOG "SSH failures below threshold: ${fails_count:-0} (< ${SSH_FAIL_THRESHOLD:-5})"
   fi
+fi
 }
 
 # ============================
