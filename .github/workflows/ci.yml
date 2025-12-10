@@ -21,7 +21,8 @@ jobs:
           chmod +x log_monitor.sh
           chmod +x config.sh
 
-      - name: Run main script
+      - name: Run main script (force bash)
+        shell: bash
         run: ./log_monitor.sh
 
       - name: ShellCheck (linting)
