@@ -12,7 +12,7 @@ set -euo pipefail
 #  - Sends alerts via email or Slack
 #  - Writes an operational log
 # ----------------------------------------------
-source ./config.sh
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/config.sh"
 
@@ -29,14 +29,12 @@ add_alert() {
   LOG "ALERT queued: ${msg%%$'\n'*}"
 }
 
-# Save state: last processed line for a file
 save_state() {
   local file="$1"; local lines="$2"
   local base="$(basename "$file")"
   echo "$lines" > "$STATE_DIR/${base}.state"
 }
 
-# Load state (last processed line), default 0
 load_state() {
   local file="$1"
   local base="$(basename "$file")"
@@ -47,7 +45,6 @@ load_state() {
   fi
 }
 
-# Extract new lines since last run
 new_lines_since_last_run() {
   local file="$1"
   [[ -f "$file" ]] || { echo ""; return; }
@@ -62,9 +59,12 @@ new_lines_since_last_run() {
   fi
 }
 
-# --- SSH failed login detector ---
+# ============================
+# SSH Failed Login Detector
+# ============================
 check_ssh_failures() {
   local file="/var/log/auth.log"
+
   if [[ ! -f "$file" ]]; then
     LOG "auth.log not found at $file; skipping SSH checks"
     return
@@ -76,26 +76,35 @@ check_ssh_failures() {
 
   [[ -z "$new" ]] && { LOG "No new auth.log lines"; return; }
 
-  # Count failures and top IPs
+  # Count failures
   local fails_count
-    fails_count=$(grep -E "Failed password|Invalid user|authentication failure" <<<"$new" | wc -l || echo 0)
+  fails_count=$(grep -E "Failed password|Invalid user|authentication failure" <<<"$new" | wc -l || echo 0)
 
+  # SAFE arithmetic
   if (( ${fails_count:-0} > 0 )); then
-    # Extract IPs and rank top offenders
-    local top_ips
-    top_ips=$(grep -Eo "from ([0-9]{1,3}\.){3}[0-9]{1,3}" <<<"$new" | awk '{print $2}' | sort | uniq -c | sort -nr | head -n "${MAX_TOP_IPS:-5}")
 
+    # Extract top IPs
+    local top_ips
+    top_ips=$(grep -Eo "from ([0-9]{1,3}\.){3}[0-9]{1,3}" <<<"$new" \
+      | awk '{print $2}' | sort | uniq -c | sort -nr | head -n "${MAX_TOP_IPS:-5}")
+
+    # SAFE threshold comparison
     if (( ${fails_count:-0} >= ${SSH_FAIL_THRESHOLD:-5} )); then
-      add_alert "$(printf "🚨 SSH brute-force suspected: %d failed logins in last ~%d min.\nTop IPs (count):\n%s\n" \
-        "$fails_count" "${RUN_WINDOW_MINUTES:-5}" "${top_ips:-none}")"
+      add_alert "$(
+        printf "🚨 SSH brute-force suspected: %d failed logins in last ~%d min.\nTop IPs (count):\n%s\n" \
+        "${fails_count:-0}" "${RUN_WINDOW_MINUTES:-5}" "${top_ips:-none}"
+      )"
     else
       LOG "SSH failures below threshold: ${fails_count:-0} (< ${SSH_FAIL_THRESHOLD:-5})"
     fi
+  else
+    LOG "No SSH failures detected in new lines"
   fi
-
 }
 
-# --- HTTP 5xx detector ---
+# ============================
+# HTTP 5xx Detector
+# ============================
 check_http_5xx() {
   local file="$WEB_ACCESS_LOG"
   [[ -n "$file" && -f "$file" ]] || { LOG "Web access log not set or missing; skipping HTTP 5xx check"; return; }
@@ -106,36 +115,48 @@ check_http_5xx() {
 
   [[ -z "$new" ]] && { LOG "No new access.log lines"; return; }
 
-  # Try to parse common/combined log format: status often field 9; fall back to regex
   local count_5xx
   count_5xx=$(awk '{code=$9} code ~ /^[5][0-9][0-9]$/' <<<"$new" | wc -l || echo 0)
 
-  if (( count_5xx >= HTTP_5XX_THRESHOLD )); then
-    # Top 5xx endpoints (assuming request is within quotes)
+  if (( ${count_5xx:-0} >= ${HTTP_5XX_THRESHOLD:-10} )); then
     local top_paths
-    top_paths=$(awk 'match($0,/\"(GET|POST|PUT|PATCH|DELETE|HEAD) ([^ ]+)/,m) {print m[2]}' <<<"$new" | sort | uniq -c | sort -nr | head -n 5)
-    add_alert "$(printf "🔥 HTTP 5xx spike: %d errors in last ~%d min.\nTop endpoints: \n%s\n" "$count_5xx" "${RUN_WINDOW_MINUTES}" "${top_paths:-none}")"
+    top_paths=$(awk 'match($0,/\"(GET|POST|PUT|PATCH|DELETE|HEAD) ([^ ]+)/,m){print m[2]}' <<<"$new" \
+      | sort | uniq-c | sort -nr | head -n 5)
+
+    add_alert "$(
+      printf "🔥 HTTP 5xx spike: %d errors in last ~%d min.\nTop endpoints:\n%s\n" \
+      "${count_5xx:-0}" "${RUN_WINDOW_MINUTES:-5}" "${top_paths:-none}"
+    )"
   else
-    LOG "HTTP 5xx below threshold: $count_5xx (< $HTTP_5XX_THRESHOLD)"
+    LOG "HTTP 5xx below threshold: ${count_5xx:-0} (< ${HTTP_5XX_THRESHOLD:-10})"
   fi
 }
 
-# --- Disk usage threshold ---
+# ============================
+# Disk Usage Monitor
+# ============================
 check_disk_usage() {
   local overuse
-  overuse=$(df -hP | awk -v th="$DISK_USAGE_THRESHOLD" 'NR>1 {gsub(/%/, "", $5); if($5+0 >= th){printf "%s (%s%%) on %s\n", $1, $5, $6}}')
+  overuse=$(df -hP | awk -v th="${DISK_USAGE_THRESHOLD:-90}" '
+    NR > 1 {
+      gsub(/%/, "", $5)
+      if ($5+0 >= th) { printf "%s (%s%%) on %s\n", $1, $5, $6 }
+    }')
+
   if [[ -n "$overuse" ]]; then
-    add_alert "$(printf "💽 Disk usage high (>%d%%):\n%s" "$DISK_USAGE_THRESHOLD" "$overuse")"
+    add_alert "$(printf "💽 Disk usage high (>%d%%):\n%s" "${DISK_USAGE_THRESHOLD:-90}" "$overuse")"
   else
-    LOG "Disk usage OK (< ${DISK_USAGE_THRESHOLD}%)"
+    LOG "Disk usage OK (< ${DISK_USAGE_THRESHOLD:-90}%)"
   fi
 }
 
-# --- Send alerts ---
+# ============================
+# Alert Dispatch
+# ============================
 send_email() {
   local subject="$1"; local body="$2"
-  if [[ "${ALERT_EMAIL}" -eq 1 ]]; then
-    if command -v mail >/dev/null 2>&1; then
+  if [[ "${ALERT_EMAIL:-0}" -eq 1 ]]; then
+    if command -v mail >/dev/null; then
       echo -e "$body" | mail -s "$subject" "$EMAIL_TO" || LOG "mail send failed"
       LOG "Email sent to $EMAIL_TO"
     else
@@ -146,9 +167,11 @@ send_email() {
 
 send_slack() {
   local body="$1"
-  if [[ "${ALERT_SLACK}" -eq 1 && -n "${SLACK_WEBHOOK_URL}" ]]; then
-    if command -v curl >/dev/null 2>&1; then
-      curl -sS -X POST -H 'Content-type: application/json' --data "$(printf '{"text": "%s"}' "$(echo -e "$body" | sed 's/"/\"/g')")" "$SLACK_WEBHOOK_URL" >/dev/null || LOG "Slack send failed"
+  if [[ "${ALERT_SLACK:-0}" -eq 1 && -n "${SLACK_WEBHOOK_URL:-}" ]]; then
+    if command -v curl >/dev/null; then
+      curl -sS -X POST -H 'Content-type: application/json' \
+        --data "$(printf '{"text": "%s"}' "$(echo -e "$body" | sed 's/"/\\"/g')")" \
+        "$SLACK_WEBHOOK_URL" >/dev/null || LOG "Slack send failed"
       LOG "Slack notification sent"
     else
       LOG "curl not found; cannot send Slack notification"
@@ -156,6 +179,9 @@ send_slack() {
   fi
 }
 
+# ============================
+# Main Routine
+# ============================
 main() {
   LOG "===== Log monitor run started ====="
   check_ssh_failures
@@ -165,8 +191,11 @@ main() {
   if [[ -n "$alert_buffer" ]]; then
     local subject="Log Monitor Alerts ($(hostname)) - $(date +"%Y-%m-%d %H:%M")"
     local body
-    body="$(printf "⏱ Window ~ last %d minutes\nHost: %s\n\n%s" "${RUN_WINDOW_MINUTES}" "$(hostname)" "$alert_buffer")"
-    # persist alert snapshot
+    body="$(
+      printf "⏱ Window ~ last %d minutes\nHost: %s\n\n%s" \
+      "${RUN_WINDOW_MINUTES:-5}" "$(hostname)" "$alert_buffer"
+    )"
+
     local fname="$SCRIPT_DIR/alerts/alert_$(date +%Y%m%d_%H%M%S).txt"
     echo -e "$body" > "$fname"
     LOG "Alert saved to $fname"
@@ -176,6 +205,7 @@ main() {
   else
     LOG "No alerts generated this run"
   fi
+
   LOG "===== Log monitor run finished ====="
 }
 
