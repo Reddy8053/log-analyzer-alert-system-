@@ -82,7 +82,7 @@ check_ssh_failures() {
 
   # SAFE arithmetic
   # SAFE arithmetic
-if (( ${fails_count:-0} > 0 )); then
+if ((${fails_count:-0} > 0)); then
   # Extract top IPs
   local top_ips
   top_ips=$(grep -Eo "from ([0-9]{1,3}\.){3}[0-9]{1,3}" <<<"$new" \
