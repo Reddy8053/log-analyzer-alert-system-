@@ -25,6 +25,4 @@ jobs:
         run: ./log_monitor.sh
 
       - name: ShellCheck (linting)
-        uses: ludeeus/action-shellcheck@v2
-        with:
-          severity: style
+        uses: ludeeus/action-shellcheck@master
