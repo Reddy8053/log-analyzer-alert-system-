@@ -26,5 +26,7 @@ jobs:
         run: ./log_monitor.sh
 
       - name: ShellCheck (linting)
-        uses: ludeeus/action-shellcheck@master
-        continue-on-error: true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck *.sh || true
