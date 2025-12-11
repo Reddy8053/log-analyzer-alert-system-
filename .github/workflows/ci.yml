@@ -1,4 +1,4 @@
-name: Shell Script CI
+name: Shell Script CI/CD to AWS EC2
 
 on:
   push:
@@ -9,6 +9,10 @@ on:
       - main
 
 jobs:
+
+  # ---------------------------
+  # 1. BUILD & TEST (CI)
+  # ---------------------------
   build-test:
     runs-on: ubuntu-latest
 
@@ -29,4 +33,34 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck *.sh || true
+          shellcheck *.sh || true  # This prevents failures
+
+  # ---------------------------
+  # 2. DEPLOY TO AWS EC2 (CD)
+  # ---------------------------
+  deploy:
+    needs: build-test  
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copy scripts to EC2
+        run: |
+          scp -o StrictHostKeyChecking=no log_monitor.sh config.sh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/
+
+      - name: Run script on EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+          chmod +x ~/log_monitor.sh ~/config.sh
+          bash ~/log_monitor.sh
+          echo "Deployed and executed successfully on EC2."
+          EOF
